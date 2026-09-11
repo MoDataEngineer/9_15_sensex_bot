@@ -28,8 +28,8 @@ SENSEX_SECURITY_ID = 51
 UNDERLYING_SEGMENT = "IDX_I"
 
 # Recording window in local machine time (IST).
-START_TIME = dtime(14, 15, 59)
-END_TIME = dtime(14, 17, 0)
+START_TIME = dtime(9, 14, 45)
+END_TIME = dtime(9, 16, 0)
 
 # ATM +/- 100/200/300
 STRIKE_OFFSETS = [-300, -200, -100, 0, 100, 200, 300]
