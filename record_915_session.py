@@ -2,28 +2,11 @@ import os
 import csv
 import json
 import time
-from datetime import datetime, time as dtime, timedelta
+from datetime import datetime, time as dtime
 
 import requests
 from dotenv import load_dotenv
 from dhanhq import DhanContext, MarketFeed
-
-# ============================================================
-# SENSEX 9:15 PAPER-RESEARCH RECORDER
-#
-# NO ORDERS ARE PLACED.
-#
-# Records:
-#   - SENSEX index: Ticker feed
-#   - ATM +/- 100/200/300 CE & PE: Full feed
-#   - local nanosecond timestamps
-#   - exchange LTT
-#   - LTP/LTQ/volume/OI
-#   - 5-level option depth
-#
-# Run manually before 09:14:45 IST on a trading day.
-# The script waits until the recording window automatically.
-# ============================================================
 
 load_dotenv()
 
@@ -31,9 +14,7 @@ CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
 ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
 
 if not CLIENT_ID or not ACCESS_TOKEN:
-    raise RuntimeError(
-        "DHAN_CLIENT_ID / DHAN_ACCESS_TOKEN missing from .env"
-    )
+    raise RuntimeError("DHAN_CLIENT_ID / DHAN_ACCESS_TOKEN missing from .env")
 
 HEADERS = {
     "access-token": ACCESS_TOKEN,
@@ -43,7 +24,6 @@ HEADERS = {
 
 BASE_URL = "https://api.dhan.co/v2"
 
-# SENSEX
 SENSEX_SECURITY_ID = 51
 UNDERLYING_SEGMENT = "IDX_I"
 
@@ -51,7 +31,7 @@ UNDERLYING_SEGMENT = "IDX_I"
 START_TIME = dtime(9, 14, 45)
 END_TIME = dtime(9, 16, 0)
 
-# Strike ladder: ATM +/- 100/200/300
+# ATM +/- 100/200/300
 STRIKE_OFFSETS = [-300, -200, -100, 0, 100, 200, 300]
 
 
@@ -60,7 +40,6 @@ def now_local():
 
 
 def wait_until(target_time):
-    """Wait until today's target clock time."""
     while True:
         now = now_local()
 
@@ -71,7 +50,6 @@ def wait_until(target_time):
             datetime.combine(now.date(), target_time) - now
         ).total_seconds()
 
-        # Sleep in short chunks so startup remains responsive.
         time.sleep(min(max(seconds, 0.01), 0.5))
 
 
@@ -132,8 +110,6 @@ def build_contracts(chain_data):
         key=lambda x: abs(x - spot)
     )
 
-    # Ensure the ATM and ladder are aligned to the actual available
-    # 100-point strikes.
     atm = round(atm / 100) * 100
 
     strike_key_map = {
@@ -148,7 +124,7 @@ def build_contracts(chain_data):
         key = strike_key_map.get(round(float(strike), 6))
 
         if key is None:
-            print(f"WARNING: strike {strike} not found in option chain.")
+            print(f"WARNING: strike {strike} not found.")
             continue
 
         strike_data = option_chain[key]
@@ -200,18 +176,13 @@ def main():
     print("=" * 80)
     print("NO ORDERS WILL BE PLACED.")
 
-    now = now_local()
-
-    # If launched before today's window, wait.
-    if now.time() < START_TIME:
+    if now_local().time() < START_TIME:
         print(
             f"\nWaiting for recording window: "
             f"{START_TIME.strftime('%H:%M:%S')} IST"
         )
         wait_until(START_TIME)
 
-    # If launched after the recording window, fail rather than silently
-    # collecting the wrong data.
     if now_local().time() > END_TIME:
         raise RuntimeError(
             "Today's 9:15 recording window has already passed. "
@@ -251,9 +222,29 @@ def main():
             f"{str(c['chain_ltp']):>12}"
         )
 
+    # ------------------------------------------------------------
+    # DAILY OUTPUT FOLDER
+    # ------------------------------------------------------------
+    # Example:
+    # 9.15_SENSEX_BOT/
+    # └── 2026-09-12/
+    #     ├── session_ticks_20260912_091445.csv
+    #     └── session_contracts_20260912_091445.json
+    # ------------------------------------------------------------
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_date = datetime.now().strftime("%Y-%m-%d")
 
-    map_file = f"session_contracts_{timestamp}.json"
+    output_dir = os.path.join(
+        os.getcwd(),
+        session_date
+    )
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    map_file = os.path.join(
+        output_dir,
+        f"session_contracts_{timestamp}.json"
+    )
 
     with open(map_file, "w", encoding="utf-8") as f:
         json.dump(
@@ -279,7 +270,6 @@ def main():
             indent=2,
         )
 
-    # Index = Ticker.
     instruments = [
         (
             MarketFeed.IDX,
@@ -288,7 +278,6 @@ def main():
         )
     ]
 
-    # Options = Full.
     for c in contracts:
         instruments.append(
             (
@@ -298,10 +287,15 @@ def main():
             )
         )
 
-    print("\nConnecting to Dhan WebSocket...")
+    print("\n" + "=" * 80)
+    print("WEBSOCKET SUBSCRIPTIONS")
+    print("=" * 80)
     print(f"Total instruments: {len(instruments)}")
     print("1 SENSEX + 14 options")
-    print("\nRecording until 09:16:00 IST...")
+
+    print("\nConnecting to Dhan WebSocket...")
+    print("Recording until 09:16:00 IST...")
+    print("NO ORDERS WILL BE PLACED.\n")
 
     dhan_context = DhanContext(
         CLIENT_ID,
@@ -314,7 +308,10 @@ def main():
         "v2",
     )
 
-    csv_file = f"session_ticks_{timestamp}.csv"
+    csv_file = os.path.join(
+        output_dir,
+        f"session_ticks_{timestamp}.csv"
+    )
 
     columns = [
         "local_time",
@@ -349,15 +346,11 @@ def main():
     writer.writeheader()
 
     packet_count = 0
-    first_packet_local_ns = None
     recording_started = None
 
     try:
         feed.run_forever()
 
-        # run_forever establishes the connection/subscription.
-        # Wait until the exact recording window if connection was
-        # established early.
         if now_local().time() < START_TIME:
             wait_until(START_TIME)
 
@@ -369,15 +362,8 @@ def main():
             if not packet:
                 continue
 
-            local_ns = time.time_ns()
-
-            if first_packet_local_ns is None:
-                first_packet_local_ns = local_ns
-
             row = packet_to_row(packet)
 
-            # packet_to_row obtains its own local timestamps. Keep the
-            # packet intact and write every received packet.
             writer.writerow(row)
             csv_handle.flush()
 
@@ -420,12 +406,8 @@ def main():
                 f"{recording_started.isoformat()}"
             )
 
-        print("\nNext step: upload the CSV and JSON from this session.")
-        print(
-            "We will analyze the 09:15:00 first ticks, "
-            "CE/PE relative movement, depth imbalance, "
-            "and candidate NO-TRADE conditions."
-        )
+        print("\nFiles for this session are stored in:")
+        print(f"  {output_dir}")
 
 
 if __name__ == "__main__":

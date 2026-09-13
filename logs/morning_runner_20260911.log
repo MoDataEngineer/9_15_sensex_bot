@@ -1,0 +1,63 @@
+[2026-09-11 18:55:41] Morning runner started.
+[2026-09-11 18:55:41] Runner log file: C:\Users\Mohanraj Kandhasamy\Desktop\9.15_SENSEX_BOT\logs\morning_runner_20260911.log
+[2026-09-11 18:55:43] Trading-day check passed for 2026-09-11.
+[2026-09-11 18:55:44] Fresh Dhan access token validated successfully. Expiry: 2026-09-12T18:55:44.389
+[2026-09-11 18:55:44] Validated access token written to .env.
+[2026-09-11 18:55:44] Runner stopped safely: RuntimeError: Current time 18:55:44 is already past the recording window ending at 09:16:00. Recorder will not be started.
+[2026-09-11 18:57:28] Morning runner started.
+[2026-09-11 18:57:28] Runner log file: C:\Users\Mohanraj Kandhasamy\Desktop\9.15_SENSEX_BOT\logs\morning_runner_20260911.log
+[2026-09-11 18:57:36] Trading-day check passed for 2026-09-11.
+[2026-09-11 18:57:37] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 18:57:37] Retrying Dhan authentication with the next TOTP window after 23.01s.
+[2026-09-11 18:58:03] Fresh Dhan access token validated successfully. Expiry: 2026-09-12T18:58:02.212
+[2026-09-11 18:58:03] Validated access token written to .env.
+[2026-09-11 18:58:03] Runner stopped safely: RuntimeError: Current time 18:58:03 is already past the recording window ending at 09:16:00. Recorder will not be started.
+[2026-09-11 19:10:36] Morning runner started.
+[2026-09-11 19:10:36] Runner log file: C:\Users\Mohanraj Kandhasamy\Desktop\9.15_SENSEX_BOT\logs\morning_runner_20260911.log
+[2026-09-11 19:10:38] Trading-day check passed for 2026-09-11.
+[2026-09-11 19:10:39] Fresh Dhan access token validated successfully. Expiry: 2026-09-12T19:10:38.748
+[2026-09-11 19:10:39] Validated access token written to .env.
+[2026-09-11 19:10:39] Runner stopped safely: RuntimeError: Current time 19:10:39 is already past the recording window ending at 09:16:00. Recorder will not be started.
+[2026-09-11 19:10:39] Morning runner started.
+[2026-09-11 19:10:39] Runner log file: C:\Users\Mohanraj Kandhasamy\Desktop\9.15_SENSEX_BOT\logs\morning_runner_20260911.log
+[2026-09-11 19:10:40] Trading-day check passed for 2026-09-11.
+[2026-09-11 19:10:40] Morning runner started.
+[2026-09-11 19:10:40] Runner log file: C:\Users\Mohanraj Kandhasamy\Desktop\9.15_SENSEX_BOT\logs\morning_runner_20260911.log
+[2026-09-11 19:10:40] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 19:10:40] Retrying Dhan authentication with the next TOTP window after 19.77s.
+[2026-09-11 19:10:41] Trading-day check passed for 2026-09-11.
+[2026-09-11 19:10:41] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 19:10:41] Retrying Dhan authentication with the next TOTP window after 18.82s.
+[2026-09-11 19:10:48] Morning runner started.
+[2026-09-11 19:10:48] Runner log file: C:\Users\Mohanraj Kandhasamy\Desktop\9.15_SENSEX_BOT\logs\morning_runner_20260911.log
+[2026-09-11 19:10:50] Trading-day check passed for 2026-09-11.
+[2026-09-11 19:10:50] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 19:10:50] Retrying Dhan authentication with the next TOTP window after 10.15s.
+[2026-09-11 19:11:02] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 19:11:02] Runner stopped safely: RuntimeError: Dhan access-token generation failed after retry.
+[2026-09-11 19:11:02] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 19:11:02] Runner stopped safely: RuntimeError: Dhan access-token generation failed after retry.
+[2026-09-11 19:11:02] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 19:11:02] Runner stopped safely: RuntimeError: Dhan access-token generation failed after retry.
+[2026-09-11 19:11:35] Morning runner started.
+[2026-09-11 19:11:35] Runner log file: C:\Users\Mohanraj Kandhasamy\Desktop\9.15_SENSEX_BOT\logs\morning_runner_20260911.log
+[2026-09-11 19:11:36] Trading-day check passed for 2026-09-11.
+[2026-09-11 19:11:37] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 19:11:37] Retrying Dhan authentication with the next TOTP window after 23.35s.
+[2026-09-11 19:12:02] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 19:12:02] Runner stopped safely: RuntimeError: Dhan access-token generation failed after retry.
+[2026-09-11 19:14:41] Morning runner started.
+[2026-09-11 19:14:41] Runner log file: C:\Users\Mohanraj Kandhasamy\Desktop\9.15_SENSEX_BOT\logs\morning_runner_20260911.log
+[2026-09-11 19:14:42] Trading-day check passed for 2026-09-11.
+[2026-09-11 19:14:43] Dhan token generation succeeded but no access token was returned.
+[2026-09-11 19:14:43] Retrying Dhan authentication with the next TOTP window after 17.34s.
+[2026-09-11 19:15:03] Fresh Dhan access token validated successfully. Expiry: 2026-09-12T19:15:02.225
+[2026-09-11 19:15:03] Validated access token written to .env.
+[2026-09-11 19:15:03] Runner stopped safely: RuntimeError: Current time 19:15:03 is already past the recording window ending at 09:16:00. Recorder will not be started.
+[2026-09-11 19:24:53] Morning runner started.
+[2026-09-11 19:24:53] Runner log file: C:\Users\Mohanraj Kandhasamy\Desktop\9.15_SENSEX_BOT\logs\morning_runner_20260911.log
+[2026-09-11 19:24:54] Trading-day check passed for 2026-09-11.
+[2026-09-11 19:24:56] Fresh Dhan access token validated successfully. Expiry: 2026-09-12T19:24:55.786
+[2026-09-11 19:24:56] Validated access token written to .env.
+[2026-09-11 19:24:56] Current time 19:24:56 is already past the recording window ending at 09:16:00. Recorder will not be started.
+[2026-09-11 19:24:56] No recording window available today. Runner completed safely.
