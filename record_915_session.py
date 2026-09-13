@@ -2,19 +2,23 @@ import os
 import csv
 import json
 import time
+import argparse
 from datetime import datetime, time as dtime
+from zoneinfo import ZoneInfo
 
 import requests
-from dotenv import load_dotenv
 from dhanhq import DhanContext, MarketFeed
 
-load_dotenv()
 
-CLIENT_ID = os.getenv("DHAN_CLIENT_ID")
-ACCESS_TOKEN = os.getenv("DHAN_ACCESS_TOKEN")
+IST = ZoneInfo("Asia/Kolkata")
+
+CLIENT_ID = os.environ.get("DHAN_CLIENT_ID")
+ACCESS_TOKEN = os.environ.get("DHAN_ACCESS_TOKEN")
 
 if not CLIENT_ID or not ACCESS_TOKEN:
-    raise RuntimeError("DHAN_CLIENT_ID / DHAN_ACCESS_TOKEN missing from .env")
+    raise RuntimeError(
+        "DHAN_CLIENT_ID / DHAN_ACCESS_TOKEN environment variables are required"
+    )
 
 HEADERS = {
     "access-token": ACCESS_TOKEN,
@@ -27,30 +31,49 @@ BASE_URL = "https://api.dhan.co/v2"
 SENSEX_SECURITY_ID = 51
 UNDERLYING_SEGMENT = "IDX_I"
 
-# Recording window in local machine time (IST).
-START_TIME = dtime(9, 14, 45)
-END_TIME = dtime(9, 16, 0)
+# ------------------------------------------------------------
+# MARKET TIMING
+# ------------------------------------------------------------
+# The recorder is launched before market open.
+# Feed/contract preparation happens before 09:15.
+# ACTUAL tick recording begins at 09:15:00 IST.
+RECORD_START_TIME = dtime(9, 15, 0)
+RECORD_END_TIME = dtime(9, 16, 0)
 
 # ATM +/- 100/200/300
 STRIKE_OFFSETS = [-300, -200, -100, 0, 100, 200, 300]
 
 
 def now_local():
-    return datetime.now()
+    return datetime.now(IST)
 
 
 def wait_until(target_time):
+    """Precision wait using Asia/Kolkata wall-clock time."""
     while True:
         now = now_local()
 
         if now.time() >= target_time:
             return
 
-        seconds = (
-            datetime.combine(now.date(), target_time) - now
-        ).total_seconds()
+        target = datetime.combine(
+            now.date(),
+            target_time,
+            tzinfo=IST,
+        )
 
-        time.sleep(min(max(seconds, 0.01), 0.5))
+        remaining = (target - now).total_seconds()
+
+        if remaining > 30:
+            sleep_seconds = 10.0
+        elif remaining > 5:
+            sleep_seconds = 1.0
+        elif remaining > 1:
+            sleep_seconds = 0.2
+        else:
+            sleep_seconds = 0.05
+
+        time.sleep(max(0.01, min(sleep_seconds, remaining)))
 
 
 def api_post(path, payload):
@@ -60,6 +83,7 @@ def api_post(path, payload):
         json=payload,
         timeout=10,
     )
+
     response.raise_for_status()
 
     data = response.json()
@@ -105,12 +129,13 @@ def build_contracts(chain_data):
 
     available_strikes = [float(k) for k in option_chain.keys()]
 
-    atm = min(
+    nearest_strike = min(
         available_strikes,
-        key=lambda x: abs(x - spot)
+        key=lambda x: abs(x - spot),
     )
 
-    atm = round(atm / 100) * 100
+    # Nearest-100 ATM.
+    atm = round(nearest_strike / 100) * 100
 
     strike_key_map = {
         round(float(k), 6): k
@@ -135,21 +160,33 @@ def build_contracts(chain_data):
             if not leg:
                 continue
 
-            contracts.append({
-                "strike": int(strike),
-                "option_type": option_type,
-                "security_id": int(leg["security_id"]),
-                "chain_ltp": leg.get("last_price"),
-            })
+            contracts.append(
+                {
+                    "strike": int(strike),
+                    "option_type": option_type,
+                    "security_id": int(leg["security_id"]),
+                    "chain_ltp": leg.get("last_price"),
+                }
+            )
 
     return spot, atm, contracts
 
 
-def packet_to_row(packet):
+def packet_to_row(packet, received_at=None):
+    """
+    Convert a Dhan MarketFeed packet into one CSV row.
+
+    received_at is captured at the moment get_data() returns so the
+    dataset has a local receipt timestamp independent of the packet's
+    exchange timestamp.
+    """
+    if received_at is None:
+        received_at = now_local()
+
     depth = packet.get("depth")
 
     return {
-        "local_time": datetime.now().strftime("%H:%M:%S.%f")[:-3],
+        "local_time": received_at.strftime("%H:%M:%S.%f")[:-3],
         "local_ns": time.time_ns(),
         "monotonic_ns": time.monotonic_ns(),
         "packet_type": packet.get("type"),
@@ -165,29 +202,47 @@ def packet_to_row(packet):
         "OI": packet.get("OI"),
         "depth_json": (
             json.dumps(depth, separators=(",", ":"))
-            if depth is not None else ""
+            if depth is not None
+            else ""
         ),
     }
 
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="SENSEX 9:15 paper-research recorder"
+    )
+
+    parser.add_argument(
+        "--preparation-test",
+        action="store_true",
+        help="Prepare contracts and connect MarketFeed, then exit without recording.",
+    )
+
+    args = parser.parse_args()
+
     print("=" * 80)
     print("SENSEX 9:15 PAPER-RESEARCH RECORDER")
     print("=" * 80)
     print("NO ORDERS WILL BE PLACED.")
 
-    if now_local().time() < START_TIME:
-        print(
-            f"\nWaiting for recording window: "
-            f"{START_TIME.strftime('%H:%M:%S')} IST"
-        )
-        wait_until(START_TIME)
+    current_time = now_local().time()
 
-    if now_local().time() > END_TIME:
+    # The runner should launch this process before 09:15.
+    # If it is launched after the recording window, do not create a
+    # misleading/late dataset.
+    if current_time >= RECORD_END_TIME:
         raise RuntimeError(
-            "Today's 9:15 recording window has already passed. "
-            "Run this script before 09:14:45 IST on the next trading day."
+            "Today's 9:15 recording window has already passed."
         )
+
+    # ------------------------------------------------------------
+    # CONTRACT PREPARATION
+    # ------------------------------------------------------------
+    # IMPORTANT:
+    # Do this BEFORE 09:15 so the WebSocket can be connected before
+    # the actual recording boundary.
+    # ------------------------------------------------------------
 
     print("\nGetting nearest SENSEX expiry...")
     expiry = get_expiry()
@@ -214,42 +269,40 @@ def main():
     )
     print("-" * 80)
 
-    for c in contracts:
+    for contract in contracts:
         print(
-            f"{c['strike']:>10} "
-            f"{c['option_type']:>6} "
-            f"{c['security_id']:>12} "
-            f"{str(c['chain_ltp']):>12}"
+            f"{contract['strike']:>10} "
+            f"{contract['option_type']:>6} "
+            f"{contract['security_id']:>12} "
+            f"{str(contract['chain_ltp']):>12}"
         )
 
     # ------------------------------------------------------------
     # DAILY OUTPUT FOLDER
     # ------------------------------------------------------------
-    # Example:
-    # 9.15_SENSEX_BOT/
-    # └── 2026-09-12/
-    #     ├── session_ticks_20260912_091445.csv
-    #     └── session_contracts_20260912_091445.json
-    # ------------------------------------------------------------
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_date = datetime.now().strftime("%Y-%m-%d")
+
+    now = now_local()
+    timestamp = now.strftime("%Y%m%d_%H%M%S")
+    session_date = now.strftime("%Y-%m-%d")
 
     output_dir = os.path.join(
         os.getcwd(),
-        session_date
+        session_date,
     )
 
     os.makedirs(output_dir, exist_ok=True)
 
     map_file = os.path.join(
         output_dir,
-        f"session_contracts_{timestamp}.json"
+        f"session_contracts_{timestamp}.json",
     )
 
     with open(map_file, "w", encoding="utf-8") as f:
         json.dump(
             {
-                "created_at": datetime.now().isoformat(),
+                "created_at": now.isoformat(),
+                "record_start": RECORD_START_TIME.strftime("%H:%M:%S"),
+                "record_end": RECORD_END_TIME.strftime("%H:%M:%S"),
                 "expiry": expiry,
                 "reference_spot": spot,
                 "reference_atm": atm,
@@ -270,6 +323,10 @@ def main():
             indent=2,
         )
 
+    # ------------------------------------------------------------
+    # WEBSOCKET SUBSCRIPTIONS
+    # ------------------------------------------------------------
+
     instruments = [
         (
             MarketFeed.IDX,
@@ -278,11 +335,11 @@ def main():
         )
     ]
 
-    for c in contracts:
+    for contract in contracts:
         instruments.append(
             (
                 MarketFeed.BSE_FNO,
-                str(c["security_id"]),
+                str(contract["security_id"]),
                 MarketFeed.Full,
             )
         )
@@ -294,7 +351,8 @@ def main():
     print("1 SENSEX + 14 options")
 
     print("\nConnecting to Dhan WebSocket...")
-    print("Recording until 09:16:00 IST...")
+    print("Actual recording boundary: 09:15:00 IST")
+    print("Recording ends: 09:16:00 IST")
     print("NO ORDERS WILL BE PLACED.\n")
 
     dhan_context = DhanContext(
@@ -310,7 +368,7 @@ def main():
 
     csv_file = os.path.join(
         output_dir,
-        f"session_ticks_{timestamp}.csv"
+        f"session_ticks_{timestamp}.csv",
     )
 
     columns = [
@@ -331,72 +389,165 @@ def main():
         "depth_json",
     ]
 
-    csv_handle = open(
-        csv_file,
-        "w",
-        newline="",
-        encoding="utf-8",
-    )
-
-    writer = csv.DictWriter(
-        csv_handle,
-        fieldnames=columns,
-    )
-
-    writer.writeheader()
-
-    packet_count = 0
+    csv_handle = None
     recording_started = None
+    recording_finished = None
+    rows_written = 0
 
     try:
+        csv_handle = open(
+            csv_file,
+            "w",
+            newline="",
+            encoding="utf-8",
+        )
+
+        writer = csv.DictWriter(
+            csv_handle,
+            fieldnames=columns,
+        )
+
+        writer.writeheader()
+        csv_handle.flush()
+
+        # --------------------------------------------------------
+        # PRE-OPEN WEBSOCKET CONNECTION
+        # --------------------------------------------------------
+        # Dhan's run_forever() establishes the WebSocket connection
+        # and subscription, then returns. get_data() receives packets.
+        # We deliberately do not call get_data() until 09:15.
+        # --------------------------------------------------------
+
+        print(
+            f"[{now_local().isoformat()}] "
+            "Connecting to Dhan MarketFeed before 09:15..."
+        )
+
         feed.run_forever()
 
-        if now_local().time() < START_TIME:
-            wait_until(START_TIME)
+        feed_ready_at = now_local()
+
+        print(
+            f"[{feed_ready_at.isoformat()}] "
+            "MarketFeed connected/subscribed."
+        )
+
+        # --------------------------------------------------------
+        # PREPARATION-ONLY TEST MODE
+        # --------------------------------------------------------
+        # Used by the manual GitHub Actions test.
+        # This verifies:
+        #   - expiry retrieval
+        #   - option-chain retrieval
+        #   - ATM contract selection
+        #   - MarketFeed construction
+        #   - WebSocket connection/subscription
+        #
+        # NO MARKET TICKS ARE RECORDED IN THIS MODE.
+        # --------------------------------------------------------
+
+        if args.preparation_test:
+            preparation_finished = now_local()
+
+            print("\n" + "=" * 80)
+            print("PREPARATION TEST PASSED")
+            print("=" * 80)
+            print(
+                f"MarketFeed ready at: "
+                f"{preparation_finished.isoformat()}"
+            )
+            print(f"Contracts prepared : {len(contracts)}")
+            print(f"Instruments ready  : {len(instruments)}")
+            print("Recording started  : NO")
+            print("=" * 80)
+
+            return 0
+
+        # --------------------------------------------------------
+        # WAIT FOR ACTUAL MARKET OPEN
+        # --------------------------------------------------------
+
+        if now_local().time() < RECORD_START_TIME:
+            print(
+                f"[{now_local().isoformat()}] "
+                "Feed ready. Waiting for 09:15:00 IST..."
+            )
+            wait_until(RECORD_START_TIME)
 
         recording_started = now_local()
 
-        while now_local().time() <= END_TIME:
+        print(
+            f"[{recording_started.isoformat()}] "
+            "ACTUAL RECORDING STARTED."
+        )
+
+        # --------------------------------------------------------
+        # RECORD 09:15:00 <= receipt time < 09:16:00
+        # --------------------------------------------------------
+
+        while True:
+            current_time = now_local().time()
+
+            if current_time >= RECORD_END_TIME:
+                break
+
             packet = feed.get_data()
+            received_at = now_local()
 
             if not packet:
                 continue
 
-            row = packet_to_row(packet)
+            # Hard local receipt-time boundary.
+            if received_at.time() < RECORD_START_TIME:
+                continue
 
-            writer.writerow(row)
+            if received_at.time() >= RECORD_END_TIME:
+                break
+
+            writer.writerow(packet_to_row(packet, received_at))
+            rows_written += 1
+
+            # Flush each row so the CSV is kept current on disk.
             csv_handle.flush()
 
-            packet_count += 1
+        recording_finished = now_local()
 
-            print(
-                f"{row['local_time']} | "
-                f"TYPE={row['packet_type']} | "
-                f"SEG={row['exchange_segment']} | "
-                f"ID={row['security_id']} | "
-                f"LTP={row['LTP']} | "
-                f"LTT={row['LTT']}"
-            )
+        print(
+            f"[{recording_finished.isoformat()}] "
+            f"RECORDING FINISHED. Rows written: {rows_written}"
+        )
 
     except KeyboardInterrupt:
         print("\nStopped manually.")
 
-    except Exception as e:
+    except Exception as exc:
         print("\nERROR:")
-        print(type(e).__name__, e)
+        print(type(exc).__name__, exc)
+        raise
 
     finally:
-        csv_handle.close()
-
         try:
             feed.close_connection()
-        except Exception:
-            pass
+        except Exception as exc:
+            print(
+                f"[{now_local().isoformat()}] "
+                f"Feed close warning: {exc}"
+            )
+
+        if csv_handle is not None:
+            try:
+                csv_handle.flush()
+                csv_handle.close()
+            except Exception as exc:
+                print(
+                    f"[{now_local().isoformat()}] "
+                    f"CSV close warning: {exc}"
+                )
 
         print("\n" + "=" * 80)
         print("SESSION RECORDING FINISHED")
         print("=" * 80)
-        print(f"Packets recorded : {packet_count}")
+        print(f"Packets recorded : {rows_written}")
         print(f"Tick file        : {csv_file}")
         print(f"Contract map     : {map_file}")
 
@@ -404,6 +555,12 @@ def main():
             print(
                 "Recording started: "
                 f"{recording_started.isoformat()}"
+            )
+
+        if recording_finished:
+            print(
+                "Recording finished: "
+                f"{recording_finished.isoformat()}"
             )
 
         print("\nFiles for this session are stored in:")

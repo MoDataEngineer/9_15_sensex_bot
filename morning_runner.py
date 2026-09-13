@@ -3,308 +3,572 @@ import sys
 import time
 import subprocess
 import argparse
-from datetime import datetime, date
+from datetime import datetime, date, time as dtime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import requests
 import pyotp
-from dotenv import dotenv_values
 
+
+# ============================================================
+# PATHS
+# ============================================================
 
 BASE_DIR = Path(__file__).resolve().parent
-ENV_PATH = BASE_DIR / ".env"
 RECORDER_PATH = BASE_DIR / "record_915_session.py"
-
 LOG_DIR = BASE_DIR / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-LOG_PATH = LOG_DIR / f"morning_runner_{date.today().strftime('%Y%m%d')}.log"
 
-NSE_HOLIDAY_URL = "https://www.nseindia.com/api/holiday-master?type=trading"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ============================================================
+# TIMEZONE
+# ============================================================
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+# ============================================================
+# DHAN
+# ============================================================
+
 DHAN_TOKEN_URL = "https://auth.dhan.co/app/generateAccessToken"
 DHAN_PROFILE_URL = "https://api.dhan.co/v2/profile"
 
-# TOTP codes use a 30-second time step. Avoid starting authentication in the
-# final few seconds of the current window, where a boundary race is possible.
-TOTP_PERIOD = 30
-TOTP_MIN_REMAINING_SECONDS = 5
-TOTP_RETRY_DELAY = 0.75
+TOKEN_RETRY_SECONDS = 2
+
+
+# ============================================================
+# MARKET TIMING
+# ============================================================
+
+# 09:14:30 is ONLY the preparation/buffer checkpoint.
+# Actual market tick recording begins at 09:15:00.
+PREP_TIME = dtime(9, 14, 30)
+RECORD_START = dtime(9, 15, 0)
+RECORD_END = dtime(9, 16, 0)
+
+
+# ============================================================
+# HELPERS
+# ============================================================
+
+def now_ist():
+    return datetime.now(IST)
 
 
 def log(message):
-    line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}"
+    timestamp = now_ist().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    line = f"[{timestamp}] {message}"
+
     print(line, flush=True)
+
     try:
-        with LOG_PATH.open("a", encoding="utf-8") as f:
+        log_file = LOG_DIR / f"morning_runner_{now_ist().strftime('%Y-%m-%d')}.log"
+        with open(log_file, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except Exception:
         pass
 
 
-def load_config():
-    cfg = dotenv_values(ENV_PATH)
-    required = ["DHAN_CLIENT_ID", "DHAN_PIN", "DHAN_TOTP_SECRET"]
-    missing = [key for key in required if not cfg.get(key)]
-    if missing:
-        raise RuntimeError("Missing required .env values: " + ", ".join(missing))
-    return cfg
+def wait_until(target_time):
+    """
+    Precision wait until target_time in IST.
+    """
+
+    while True:
+        current = now_ist()
+        target = datetime.combine(
+            current.date(),
+            target_time,
+            tzinfo=IST
+        )
+
+        remaining = (target - current).total_seconds()
+
+        if remaining <= 0:
+            return
+
+        if remaining > 30:
+            time.sleep(10)
+        elif remaining > 5:
+            time.sleep(1)
+        elif remaining > 1:
+            time.sleep(0.2)
+        else:
+            time.sleep(0.05)
 
 
 def is_weekend(day=None):
-    day = day or date.today()
+    if day is None:
+        day = now_ist().date()
+
     return day.weekday() >= 5
 
 
-def get_nse_holidays():
+# ============================================================
+# NSE HOLIDAY CHECK
+# ============================================================
+
+def is_nse_holiday(day=None):
+    """
+    Returns:
+        True  -> confirmed NSE holiday
+        False -> confirmed trading day
+
+    Fails closed if the NSE API cannot be reached.
+    """
+
+    if day is None:
+        day = now_ist().date()
+
+    url = "https://www.nseindia.com/api/holiday-master?type=trading"
+
     headers = {
         "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/142.0.0.0 Safari/537.36"
+            "Mozilla/5.0 "
+            "(Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 "
+            "(KHTML, like Gecko) "
+            "Chrome/142.0 Safari/537.36"
         ),
         "Accept": "application/json,text/plain,*/*",
         "Referer": "https://www.nseindia.com/",
     }
-    session = requests.Session()
-    session.headers.update(headers)
-    session.get("https://www.nseindia.com/", timeout=10)
-    response = session.get(NSE_HOLIDAY_URL, timeout=10)
-    response.raise_for_status()
-    data = response.json()
-
-    holidays = set()
-    for group in data.values():
-        if not isinstance(group, list):
-            continue
-        for item in group:
-            if not isinstance(item, dict):
-                continue
-            raw_date = item.get("tradingDate") or item.get("date")
-            if not raw_date:
-                continue
-            for fmt in ("%d-%b-%Y", "%d-%m-%Y", "%Y-%m-%d"):
-                try:
-                    holidays.add(datetime.strptime(raw_date, fmt).date())
-                    break
-                except ValueError:
-                    pass
-    return holidays
-
-
-def trading_day_check():
-    today = date.today()
-    if is_weekend(today):
-        log(f"Today is {today} ({today.strftime('%A')}); no regular 09:15 session.")
-        return False
 
     try:
-        holidays = get_nse_holidays()
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=15
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        target = day.strftime("%d-%b-%Y").upper()
+
+        for item in data.get("CM", []):
+            holiday_date = str(item.get("tradingDate", "")).upper()
+
+            if holiday_date == target:
+                return True
+
+        return False
+
     except Exception as exc:
-        log(f"Could not verify NSE holiday calendar: {type(exc).__name__}.")
-        log("Failing closed; recorder will NOT be started.")
-        return False
-
-    if today in holidays:
-        log(f"Today ({today}) is listed as an NSE trading holiday.")
-        return False
-
-    log(f"Trading-day check passed for {today}.")
-    return True
+        log(f"NSE holiday check failed: {exc}")
+        raise RuntimeError(
+            "Unable to verify NSE holiday status. "
+            "Failing closed for safety."
+        ) from exc
 
 
-def seconds_remaining_in_totp_window():
-    return TOTP_PERIOD - (time.time() % TOTP_PERIOD)
+# ============================================================
+# CONFIG
+# ============================================================
 
+def load_config():
+    client_id = os.environ.get("DHAN_CLIENT_ID")
+    pin = os.environ.get("DHAN_PIN")
+    totp_secret = os.environ.get("DHAN_TOTP_SECRET")
 
-def wait_for_safe_totp_window():
-    remaining = seconds_remaining_in_totp_window()
-    if remaining < TOTP_MIN_REMAINING_SECONDS:
-        wait_seconds = remaining + TOTP_RETRY_DELAY
-        log(
-            f"TOTP window has only {remaining:.2f}s remaining; "
-            f"waiting {wait_seconds:.2f}s for the next code."
+    missing = []
+
+    if not client_id:
+        missing.append("DHAN_CLIENT_ID")
+
+    if not pin:
+        missing.append("DHAN_PIN")
+
+    if not totp_secret:
+        missing.append("DHAN_TOTP_SECRET")
+
+    if missing:
+        raise RuntimeError(
+            "Missing required environment variables: "
+            + ", ".join(missing)
         )
-        time.sleep(wait_seconds)
+
+    return client_id, pin, totp_secret
 
 
-def generate_current_totp(secret):
-    return pyotp.TOTP(secret).now()
+# ============================================================
+# DHAN TOKEN
+# ============================================================
+
+def generate_access_token(client_id, pin, totp_secret):
+    """
+    Generate a fresh Dhan access token using TOTP.
+    """
+
+    for attempt in range(2):
+
+        # Avoid generating a TOTP right on a 30-second boundary.
+        current_second = int(time.time()) % 30
+
+        if current_second >= 25:
+            sleep_for = 31 - current_second
+
+            log(
+                f"TOTP boundary approaching. "
+                f"Waiting {sleep_for}s..."
+            )
+
+            time.sleep(sleep_for)
+
+        totp = pyotp.TOTP(totp_secret).now()
+
+        payload = {
+            "dhanClientId": client_id,
+            "pin": pin,
+            "totp": totp,
+        }
+
+        try:
+            response = requests.post(
+                DHAN_TOKEN_URL,
+                json=payload,
+                timeout=15
+            )
+
+            response.raise_for_status()
+
+            data = response.json()
+
+            token = (
+                data.get("accessToken")
+                or data.get("access_token")
+            )
+
+            if not token:
+                raise RuntimeError(
+                    f"Dhan token response did not contain access token: "
+                    f"{data}"
+                )
+
+            log("Fresh Dhan access token generated.")
+
+            return token
+
+        except Exception as exc:
+
+            log(
+                f"Dhan token generation attempt "
+                f"{attempt + 1} failed: {exc}"
+            )
+
+            if attempt == 0:
+                time.sleep(TOKEN_RETRY_SECONDS)
+            else:
+                raise
+
+    raise RuntimeError("Unable to generate Dhan access token.")
 
 
-def generate_dhan_access_token(client_id, pin, totp):
-    params = {"dhanClientId": client_id, "pin": pin, "totp": totp}
-    response = requests.post(DHAN_TOKEN_URL, params=params, timeout=15)
-    if response.status_code not in (200, 201):
-        log(f"Dhan token generation failed (HTTP {response.status_code}).")
-        return None
+# ============================================================
+# VALIDATE DHAN TOKEN
+# ============================================================
 
-    try:
-        data = response.json()
-    except ValueError:
-        log("Dhan token generation returned a non-JSON response.")
-        return None
+def validate_access_token(access_token):
+    headers = {
+        "access-token": access_token
+    }
 
-    token = data.get("accessToken")
-    expiry = data.get("expiryTime")
-    if not token:
-        log("Dhan token generation succeeded but no access token was returned.")
-        return None
-    return token, expiry
-
-
-def validate_dhan_token(token):
-    response = requests.get(DHAN_PROFILE_URL, headers={"access-token": token}, timeout=15)
-    if response.status_code != 200:
-        log(f"Dhan token validation failed (HTTP {response.status_code}).")
-        return False
-
-    try:
-        data = response.json()
-    except ValueError:
-        log("Dhan profile validation returned a non-JSON response.")
-        return False
-
-    status = str(data.get("status", "")).lower()
-    if status and status != "success":
-        log("Dhan profile validation did not return success.")
-        return False
-    return True
-
-
-def get_fresh_dhan_token(cfg):
-    client_id = cfg["DHAN_CLIENT_ID"]
-    pin = cfg["DHAN_PIN"]
-    secret = cfg["DHAN_TOTP_SECRET"]
-
-    # Normal path: do not use a code that is about to expire.
-    wait_for_safe_totp_window()
-    totp = generate_current_totp(secret)
-    result = generate_dhan_access_token(client_id, pin, totp)
-
-    if result is None:
-        # Boundary race/transient rejection: wait for the next TOTP window
-        # and retry exactly once with a freshly generated code.
-        remaining = seconds_remaining_in_totp_window()
-        wait_seconds = remaining + TOTP_RETRY_DELAY
-        log(f"Retrying Dhan authentication with the next TOTP window after {wait_seconds:.2f}s.")
-        time.sleep(wait_seconds)
-        totp = generate_current_totp(secret)
-        result = generate_dhan_access_token(client_id, pin, totp)
-        if result is None:
-            raise RuntimeError("Dhan access-token generation failed after retry.")
-
-    token, expiry = result
-    if not validate_dhan_token(token):
-        raise RuntimeError("Fresh Dhan access token failed profile validation.")
-
-    log(f"Fresh Dhan access token validated successfully. Expiry: {expiry}")
-    return token
-
-
-def update_env_access_token(token):
-    lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
-    output = []
-    found = False
-    for line in lines:
-        if line.startswith("DHAN_ACCESS_TOKEN="):
-            output.append(f"DHAN_ACCESS_TOKEN={token}")
-            found = True
-        else:
-            output.append(line)
-    if not found:
-        output.append(f"DHAN_ACCESS_TOKEN={token}")
-    ENV_PATH.write_text("\n".join(output) + "\n", encoding="utf-8")
-
-
-def wait_until_recording_window():
-    from datetime import time as dtime
-
-    start_time = dtime(9, 14, 45)
-    end_time = dtime(9, 16, 0)
-    now = datetime.now()
-    current_time = now.time()
-
-    if current_time > end_time:
-        log(
-            f"Current time {current_time.strftime('%H:%M:%S')} is already past "
-            f"the recording window ending at 09:16:00. Recorder will not be started."
-        )
-        return False
-
-    if current_time < start_time:
-        target = datetime.combine(now.date(), start_time)
-        wait_seconds = (target - now).total_seconds()
-        log(
-            f"Authentication completed early. Waiting {wait_seconds:.1f}s "
-            f"until 09:14:45 to start recorder."
-        )
-        time.sleep(wait_seconds)
-
-    log("Recording window reached: starting recorder.")
-
-
-def launch_recorder():
-    if not RECORDER_PATH.exists():
-        raise FileNotFoundError(f"Recorder not found: {RECORDER_PATH}")
-
-    if wait_until_recording_window() is False:
-        log("No recording window available today. Runner completed safely.")
-        return None
-
-    log(f"Launching recorder: {RECORDER_PATH.name}")
-    return subprocess.run(
-        [sys.executable, str(RECORDER_PATH)],
-        cwd=str(BASE_DIR),
-        check=False,
+    response = requests.get(
+        DHAN_PROFILE_URL,
+        headers=headers,
+        timeout=15
     )
 
+    response.raise_for_status()
+
+    log("Dhan access token validated successfully.")
+
+
+# ============================================================
+# LAUNCH RECORDER
+# ============================================================
+
+def launch_recorder(access_token, preparation_test=False):
+    """
+    Launch the SENSEX recorder.
+
+    Normal mode:
+        prepare -> connect -> record 09:15-09:16
+
+    Preparation-test mode:
+        prepare -> connect -> exit without recording
+    """
+
+    if not RECORDER_PATH.exists():
+        raise FileNotFoundError(
+            f"Recorder not found: {RECORDER_PATH}"
+        )
+
+    env = os.environ.copy()
+    env["DHAN_ACCESS_TOKEN"] = access_token
+
+    command = [
+        sys.executable,
+        str(RECORDER_PATH),
+    ]
+
+    if preparation_test:
+        command.append("--preparation-test")
+
+    log(
+        f"Launching recorder: {RECORDER_PATH.name}"
+        + (" [PREPARATION TEST]" if preparation_test else "")
+    )
+
+    process = subprocess.Popen(
+        command,
+        cwd=str(BASE_DIR),
+        env=env,
+    )
+
+    log(
+        f"Recorder process started. PID={process.pid}"
+    )
+
+    return process
+
+
+
+# ============================================================
+# PREPARATION TEST
+# ============================================================
+
+def run_preparation_test():
+    """
+    Full end-to-end preparation test.
+
+    Tests:
+      - Dhan configuration
+      - fresh TOTP authentication
+      - access-token validation
+      - option expiry retrieval
+      - option-chain retrieval
+      - ATM contract selection
+      - MarketFeed creation
+      - WebSocket connection/subscription
+
+    NO MARKET TICKS ARE RECORDED.
+    NO ORDERS ARE PLACED.
+    """
+
+    test_started = now_ist()
+
+    log("=" * 80)
+    log("SENSEX PREPARATION TEST STARTED")
+    log("=" * 80)
+    log(f"Test start: {test_started.isoformat()}")
+
+    client_id, pin, totp_secret = load_config()
+
+    log("Generating fresh Dhan access token.")
+    token_started = now_ist()
+
+    access_token = generate_access_token(
+        client_id,
+        pin,
+        totp_secret
+    )
+
+    token_finished = now_ist()
+
+    log(
+        f"Token generation: "
+        f"{(token_finished - token_started).total_seconds():.3f}s"
+    )
+
+    log("Validating Dhan access token.")
+    validate_started = now_ist()
+
+    validate_access_token(access_token)
+
+    validate_finished = now_ist()
+
+    log(
+        f"Token validation: "
+        f"{(validate_finished - validate_started).total_seconds():.3f}s"
+    )
+
+    log("Launching recorder in preparation-test mode.")
+
+    process = launch_recorder(
+        access_token,
+        preparation_test=True
+    )
+
+    return_code = process.wait()
+    test_finished = now_ist()
+
+    total_seconds = (
+        test_finished - test_started
+    ).total_seconds()
+
+    log(
+        f"Recorder preparation-test exit code: "
+        f"{return_code}"
+    )
+
+    log(
+        f"Total preparation time: "
+        f"{total_seconds:.3f}s"
+    )
+
+    if return_code != 0:
+        raise RuntimeError("Preparation test FAILED.")
+
+    log("=" * 80)
+    log("PREPARATION TEST PASSED")
+    log("=" * 80)
+
+    return 0
+
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Dhan morning authentication + 09:15 recorder launcher"
+        description="SENSEX 09:15 market recorder runner"
     )
+
     parser.add_argument(
-        "--dry-run",
+        "--test",
         action="store_true",
-        help="Run calendar/auth/token validation and .env update, but do not start recorder.",
+        help="Run without the normal trading-day restriction."
     )
+
+    parser.add_argument(
+        "--preparation-test",
+        action="store_true",
+        help="Test Dhan authentication and recorder preparation without recording."
+    )
+
     args = parser.parse_args()
 
     log("Morning runner started.")
-    log(f"Runner log file: {LOG_PATH}")
 
-    if args.dry_run:
-        log("DRY-RUN MODE: recorder will NOT be started.")
+    if args.preparation_test:
+        return run_preparation_test()
 
-    if not trading_day_check():
+    today = now_ist().date()
+
+    # --------------------------------------------------------
+    # Trading day validation
+    # --------------------------------------------------------
+
+    if not args.test:
+
+        if is_weekend(today):
+            log(
+                f"{today} is weekend. "
+                "Nothing to record."
+            )
+            return 0
+
+        if is_nse_holiday(today):
+            log(
+                f"{today} is an NSE holiday. "
+                "Nothing to record."
+            )
+            return 0
+
+    # --------------------------------------------------------
+    # Check whether we have already missed recording window
+    # --------------------------------------------------------
+
+    current_time = now_ist().time()
+
+    if current_time >= RECORD_END:
+        log(
+            f"Current time {current_time} is already after "
+            f"recording end {RECORD_END}. Exiting."
+        )
         return 0
 
-    try:
-        cfg = load_config()
-        token = get_fresh_dhan_token(cfg)
+    # --------------------------------------------------------
+    # IMPORTANT:
+    # Authentication/preparation happens BEFORE 09:14:30.
+    # --------------------------------------------------------
 
-        # Only replace the .env token after BOTH token generation and
-        # profile validation have succeeded.
-        update_env_access_token(token)
-        log("Validated access token written to .env.")
+    log("Loading Dhan configuration.")
 
-        if args.dry_run:
-            log("DRY-RUN complete: calendar + TOTP + token + validation + .env update passed.")
-            return 0
+    client_id, pin, totp_secret = load_config()
 
-        result = launch_recorder()
+    log("Generating fresh Dhan access token.")
 
-        if result is None:
-            # Outside the recording window is an expected/safe condition,
-            # not a task failure. This keeps Task Scheduler at 0x0.
-            return 0
+    access_token = generate_access_token(
+        client_id,
+        pin,
+        totp_secret
+    )
 
-        log(f"Recorder finished with exit code {result.returncode}.")
-        return result.returncode
+    log("Validating Dhan access token.")
 
-    except Exception as exc:
-        log(f"Runner stopped safely: {type(exc).__name__}: {exc}")
-        return 1
+    validate_access_token(access_token)
+
+    # --------------------------------------------------------
+    # Launch recorder BEFORE 09:15.
+    #
+    # The recorder establishes the WebSocket and subscribes
+    # before the market opens.
+    # --------------------------------------------------------
+
+    current_time = now_ist().time()
+
+    if current_time < PREP_TIME:
+
+        log(
+            f"Waiting until preparation checkpoint "
+            f"{PREP_TIME} IST."
+        )
+
+        wait_until(PREP_TIME)
+
+    log(
+        "Preparation checkpoint reached. "
+        "Starting recorder before market open."
+    )
+
+    process = launch_recorder(access_token)
+
+    # --------------------------------------------------------
+    # Wait for recorder to finish.
+    # --------------------------------------------------------
+
+    return_code = process.wait()
+
+    log(
+        f"Recorder process finished with exit code "
+        f"{return_code}."
+    )
+
+    if return_code != 0:
+        raise RuntimeError(
+            f"Recorder failed with exit code {return_code}."
+        )
+
+    log("Morning runner completed successfully.")
+
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        sys.exit(main())
+
+    except KeyboardInterrupt:
+        log("Interrupted by user.")
+        sys.exit(130)
+
+    except Exception as exc:
+        log(f"FATAL ERROR: {exc}")
+        sys.exit(1)

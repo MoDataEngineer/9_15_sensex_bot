@@ -1,0 +1,112 @@
+name: SENSEX 9:15 Market Recorder
+
+on:
+  schedule:
+    # 08:15 IST = 02:45 UTC
+    # Monday-Friday
+    - cron: "45 2 * * 1-5"
+
+  # Allows a manual test from GitHub Actions.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sensex-915-recorder
+  cancel-in-progress: false
+
+jobs:
+  record-market-data:
+    runs-on: ubuntu-latest
+
+    env:
+      DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+      DHAN_PIN: ${{ secrets.DHAN_PIN }}
+      DHAN_TOTP_SECRET: ${{ secrets.DHAN_TOTP_SECRET }}
+
+    steps:
+
+      # ----------------------------------------------------------
+      # 1. Checkout repository
+      # ----------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ----------------------------------------------------------
+      # 2. Python
+      # ----------------------------------------------------------
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # ----------------------------------------------------------
+      # 3. Install dependencies
+      # ----------------------------------------------------------
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r morning_runner_requirements.txt
+          pip install dhanhq
+
+      # ----------------------------------------------------------
+      # 4. Run temporary preparation test
+      #
+      # Temporary test: verifies authentication + contract preparation + WebSocket readiness.
+      #   - checks weekend
+      #   - checks NSE holiday
+      #   - waits using Asia/Kolkata
+      #   - reaches 09:14:30 IST
+      #   - generates fresh Dhan TOTP token
+      #   - starts the SENSEX recorder
+      # ----------------------------------------------------------
+      - name: Run SENSEX 9:15 recorder
+        run: |
+          python morning_runner.py --preparation-test
+
+      # ----------------------------------------------------------
+      # 5. Show generated session files
+      # ----------------------------------------------------------
+      - name: Show generated session files
+        if: always()
+        run: |
+          echo "Generated session files:"
+          find . -maxdepth 2 -type f \
+            \( -name "session_ticks_*.csv" \
+            -o -name "session_contracts_*.json" \) \
+            -print
+
+      # ----------------------------------------------------------
+      # 6. Commit and push today's CSV + JSON
+      # ----------------------------------------------------------
+      - name: Commit and push recorded session data
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          echo "Files to be committed:"
+          find . -maxdepth 2 -type f \
+            \( -name "session_ticks_*.csv" \
+            -o -name "session_contracts_*.json" \) \
+            -print
+
+          git add -- \
+            ':(glob)[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/*.csv' \
+            ':(glob)[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/*.json'
+
+          if git diff --cached --quiet; then
+            echo "No new session data to commit."
+            exit 0
+          fi
+
+          echo "Staged files:"
+          git diff --cached --name-only
+
+          git commit -m "data: record SENSEX 9:15 session"
+
+          git push
