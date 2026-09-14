@@ -231,7 +231,7 @@ def main():
     # The runner should launch this process before 09:15.
     # If it is launched after the recording window, do not create a
     # misleading/late dataset.
-    if current_time >= RECORD_END_TIME:
+    if current_time >= RECORD_END_TIME and not args.preparation_test:
         raise RuntimeError(
             "Today's 9:15 recording window has already passed."
         )

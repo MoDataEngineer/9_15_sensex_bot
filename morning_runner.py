@@ -230,7 +230,7 @@ def generate_access_token(client_id, pin, totp_secret):
         try:
             response = requests.post(
                 DHAN_TOKEN_URL,
-                json=payload,
+                params=payload,
                 timeout=15
             )
 
