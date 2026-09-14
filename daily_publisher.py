@@ -91,7 +91,8 @@ def publish(run_date):
     expected_prefix = f"{run_date}/"
 
     if not staged_files:
-        raise RuntimeError("Nothing was staged.")
+        print(f"ALREADY PUBLISHED: {run_date} dataset is already in Git.")
+        return
 
     unexpected = [
         path for path in staged_files
