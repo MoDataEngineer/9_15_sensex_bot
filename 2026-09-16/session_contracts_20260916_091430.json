@@ -1,0 +1,113 @@
+{
+  "created_at": "2026-09-16T09:14:30.297390+05:30",
+  "record_start": "09:15:00",
+  "record_end": "09:16:00",
+  "expiry": "2026-09-17",
+  "reference_spot": 74249.31,
+  "reference_atm": 74200,
+  "strikes": [
+    -300,
+    -200,
+    -100,
+    0,
+    100,
+    200,
+    300
+  ],
+  "contracts": [
+    {
+      "strike": 73900,
+      "option_type": "CE",
+      "security_id": 865354,
+      "chain_ltp": 493.55
+    },
+    {
+      "strike": 73900,
+      "option_type": "PE",
+      "security_id": 862574,
+      "chain_ltp": 282.65
+    },
+    {
+      "strike": 74000,
+      "option_type": "CE",
+      "security_id": 878595,
+      "chain_ltp": 425.4
+    },
+    {
+      "strike": 74000,
+      "option_type": "PE",
+      "security_id": 863731,
+      "chain_ltp": 324.5
+    },
+    {
+      "strike": 74100,
+      "option_type": "CE",
+      "security_id": 868254,
+      "chain_ltp": 378.6
+    },
+    {
+      "strike": 74100,
+      "option_type": "PE",
+      "security_id": 877854,
+      "chain_ltp": 369.85
+    },
+    {
+      "strike": 74200,
+      "option_type": "CE",
+      "security_id": 862498,
+      "chain_ltp": 327.65
+    },
+    {
+      "strike": 74200,
+      "option_type": "PE",
+      "security_id": 867901,
+      "chain_ltp": 415.6
+    },
+    {
+      "strike": 74300,
+      "option_type": "CE",
+      "security_id": 869699,
+      "chain_ltp": 284.4
+    },
+    {
+      "strike": 74300,
+      "option_type": "PE",
+      "security_id": 862237,
+      "chain_ltp": 472.05
+    },
+    {
+      "strike": 74400,
+      "option_type": "CE",
+      "security_id": 866580,
+      "chain_ltp": 241.4
+    },
+    {
+      "strike": 74400,
+      "option_type": "PE",
+      "security_id": 868482,
+      "chain_ltp": 533.7
+    },
+    {
+      "strike": 74500,
+      "option_type": "CE",
+      "security_id": 875758,
+      "chain_ltp": 203.35
+    },
+    {
+      "strike": 74500,
+      "option_type": "PE",
+      "security_id": 862742,
+      "chain_ltp": 598.45
+    }
+  ],
+  "sensex": {
+    "security_id": 51,
+    "exchange_segment": "IDX_I",
+    "feed_type": "Ticker"
+  },
+  "options": {
+    "exchange_segment": "BSE_FNO",
+    "feed_type": "Full",
+    "depth_levels": 5
+  }
+}
