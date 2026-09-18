@@ -7,7 +7,7 @@ SUMMARY = "summary.csv"
 HEADER = ["session_date","expiry","dte","atm","ref_spot",
           "sensex_open","sensex_15s","sensex_move",
           "ce_strike","ce_open","ce_15s","ce_move","ce_min","ce_max",
-          "book_ratio_0_7"]
+          "book_ratio_0_7","ce_iv","ce_delta","ce_theta","ce_vega"]
 
 def at_second(ticks, sid, sec):
     """First tick whose LTT is exactly this second. No forward-fill."""
@@ -28,9 +28,11 @@ def summarize(folder):
 
     ce_strike = atm + 100
     ce_id = None
+    ce_leg = {}
     for k in c["contracts"]:
         if k["strike"] == ce_strike and k["option_type"] == "CE":
             ce_id = str(k["security_id"])
+            ce_leg = k
     if ce_id is None:
         print(f"{folder}: no ATM+100 CE in contracts, skipping")
         return None
@@ -90,6 +92,10 @@ def summarize(folder):
         "ce_min": min(ce_prices) if ce_prices else "",
         "ce_max": max(ce_prices) if ce_prices else "",
         "book_ratio_0_7": ratio,
+        "ce_iv": ce_leg.get("iv", ""),
+        "ce_delta": ce_leg.get("delta", ""),
+        "ce_theta": ce_leg.get("theta", ""),
+        "ce_vega": ce_leg.get("vega", ""),
     }
 
 def main(folders):
