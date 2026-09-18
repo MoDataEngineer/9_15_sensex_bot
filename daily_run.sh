@@ -37,6 +37,17 @@ if [ ! -d "$DATE_DIR" ]; then
 fi
 
 echo "Dataset folder found: $DATE_DIR"
+echo "Updating summary.csv..."
+
+"$PYTHON" "$BASE_DIR/daily_summary.py" "$DATE_DIR"
+SUMMARY_STATUS=$?
+
+if [ "$SUMMARY_STATUS" -ne 0 ]; then
+    echo "WARNING: daily_summary.py failed with exit code $SUMMARY_STATUS."
+    echo "Continuing to publish the raw dataset anyway."
+else
+    echo "summary.csv updated."
+fi
 echo "Starting GitHub publishing..."
 
 "$PYTHON" "$BASE_DIR/daily_publisher.py" --date "$RUN_DATE"

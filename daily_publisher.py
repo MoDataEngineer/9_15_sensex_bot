@@ -78,7 +78,7 @@ def publish(run_date):
             )
 
     # Stage ONLY today's date folder.
-    run_command(["git", "add", "--", run_date])
+    run_command(["git", "add", "--", run_date, "summary.csv"])
 
     staged = run_command(["git", "diff", "--cached", "--name-only"])
 
@@ -96,7 +96,7 @@ def publish(run_date):
 
     unexpected = [
         path for path in staged_files
-        if not path.startswith(expected_prefix)
+        if not path.startswith(expected_prefix) and path != "summary.csv"
     ]
 
     if unexpected:
@@ -108,7 +108,11 @@ def publish(run_date):
     for path in staged_files:
         print(f"  {path}")
 
-    commit_message = f"data: SENSEX 9:15 session {run_date}"
+    dataset_files = [p for p in staged_files if p.startswith(expected_prefix)]
+    commit_message = (
+        f"data: SENSEX 9:15 session {run_date}" if dataset_files
+        else f"data: update summary.csv ({run_date})"
+    )
 
     run_command(["git", "commit", "-m", commit_message])
     run_command(["git", "push", "origin", "main"])
