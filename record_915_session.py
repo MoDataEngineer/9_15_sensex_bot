@@ -166,6 +166,14 @@ def build_contracts(chain_data):
                     "option_type": option_type,
                     "security_id": int(leg["security_id"]),
                     "chain_ltp": leg.get("last_price"),
+                    "iv": leg.get("implied_volatility"),
+                    "delta": (leg.get("greeks") or {}).get("delta"),
+                    "gamma": (leg.get("greeks") or {}).get("gamma"),
+                    "theta": (leg.get("greeks") or {}).get("theta"),
+                    "vega": (leg.get("greeks") or {}).get("vega"),
+                    "top_bid": leg.get("top_bid_price"),
+                    "top_ask": leg.get("top_ask_price"),
+                    "oi": leg.get("oi"),
                 }
             )
 
